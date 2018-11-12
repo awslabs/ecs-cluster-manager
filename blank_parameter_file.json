@@ -1,0 +1,58 @@
+[
+  {
+    "ParameterKey": "EcsClusterName",
+    "ParameterValue": ""
+  }, 
+  {
+    "ParameterKey": "EcsAmiParameterKey",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "IamRoleInstanceProfile",
+    "ParameterValue": ""
+  }, 
+  {
+    "ParameterKey": "EcsInstanceType",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "EbsVolumeSize",
+    "ParameterValue": ""
+  }, 
+  {
+    "ParameterKey": "ClusterSize",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ClusterMaxSize",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "KeyName",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "SubnetIds",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "SecurityGroupIds",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "DeploymentS3Bucket",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "LifecycleLaunchFunctionZip",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "LifecycleTerminateFunctionZip",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "LambdaFunctionRole",
+    "ParameterValue": ""
+  }
+]

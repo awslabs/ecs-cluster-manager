@@ -1,0 +1,319 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECS Cluster Template
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Cluster Configuration
+        Parameters:
+          - EcsClusterName
+          - EcsAmiParameterKey
+          - IamRoleInstanceProfile
+          - EcsInstanceType
+          - EbsVolumeSize
+          - ClusterSize
+          - ClusterMaxSize
+          - KeyName
+      - Label:
+          default: Networking Configuration
+        Parameters:
+          - SubnetIds
+          - SecurityGroupIds
+      - Label:
+          default: Lambda Configuration
+        Parameters:
+          - DeploymentS3Bucket
+          - LifecycleLaunchFunctionZip
+          - LifecycleTerminateFunctionZip
+          - LambdaFunctionRole
+    ParameterLabels:
+      ClusterMaxSize:
+        default: Recommend using double the value of ClusterSize.  CloudFormation
+          can't do math or I wouldn't prompt for this!
+Parameters:
+  ClusterMaxSize:
+    Description: Maximum cluster size while performing rolling updates.  Recommend
+      double the desired size.
+    Type: String
+  ClusterSize:
+    Description: How many nodes should be in the ECS Cluster
+    Type: String
+  DeploymentS3Bucket:
+    Description: Name of the s3 bucket where lifecycle Lambda functions are held
+    Type: String
+  EbsVolumeSize:
+    Description: Size of the EBS volume to create
+    Type: String
+  EcsAmiParameterKey:
+    Default: /ami/ecs/latest
+    Description: SSM Parameter Store String containing the Latest ECS Baked image
+    Type: AWS::SSM::Parameter::Value<String>
+  EcsClusterName:
+    Description: ECS Cluster Name
+    Type: String
+  EcsInstanceType:
+    Default: m4.large
+    Description: EC2 instance type for the cluster container instances.
+    Type: String
+  IamRoleInstanceProfile:
+    Description: EC2 Instance profile with appropriate ECS service permissions
+    Type: String
+  KeyName:
+    Description: EC2 KeyPair for SSH Access to the ECS clusters.
+    Type: AWS::EC2::KeyPair::KeyName
+  LambdaFunctionRole:
+    Description: Name of the pre-requisite 'Lambda Lifecycle Hook Role'
+    Type: String
+  LifecycleLaunchFunctionZip:
+    Description: S3 Key in the DeploymentS3Bucket bucket containing the Launch lifecycle
+      Lambda zip file.
+    Type: String
+  LifecycleTerminateFunctionZip:
+    Description: S3 Key in the DeploymentS3Bucket bucket containing the Terminate
+      lifecycle Lambda zip file.
+    Type: String
+  SecurityGroupIds:
+    Description: A comma seperated list of security group IDs to attach to the ECS
+      instances
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  SubnetIds:
+    Description: Comma seperated list of sxisting SubnetIDs for the ECS cluster hosts
+      to run within.
+    Type: List<AWS::EC2::Subnet::Id>
+Resources:
+  AutoScalingGroup:
+    Properties:
+      DesiredCapacity: !Ref 'ClusterSize'
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref 'LaunchConfiguration'
+      MaxSize: !Ref 'ClusterMaxSize'
+      MinSize: !Ref 'ClusterSize'
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: 'true'
+          Value: !Ref 'EcsClusterName'
+      VPCZoneIdentifier: !Ref 'SubnetIds'
+    Type: AWS::AutoScaling::AutoScalingGroup
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: 'false'
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: !Ref 'ClusterSize'
+        MinSuccessfulInstancesPercent: '100'
+        PauseTime: PT10M
+        SuspendProcesses:
+          - HealthCheck
+          - ReplaceUnhealthy
+          - AlarmNotification
+          - AZRebalance
+          - ScheduledActions
+        WaitOnResourceSignals: 'true'
+  ECSCluster:
+    Properties:
+      ClusterName: !Ref 'EcsClusterName'
+    Type: AWS::ECS::Cluster
+  EventContinueClusterDrain:
+    Properties:
+      Description: 'Invokes a Lambda Function to continue draining the ECS cluster
+        when our initial Lambda function has timed out '
+      EventPattern:
+        detail:
+          eventName:
+            - RecordLifecycleActionHeartbeat
+          eventSource:
+            - autoscaling.amazonaws.com
+          requestParameters:
+            autoScalingGroupName:
+              - !Ref 'AutoScalingGroup'
+            lifecycleHookName:
+              - !Ref 'TerminationLifeCycleHook'
+        detail-type:
+          - AWS API Call via CloudTrail
+        source:
+          - aws.autoscaling
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt 'LifecycleTerminateLambda.Arn'
+          Id: !Join
+            - '-'
+            - - !Ref 'EcsClusterName'
+              - InvokeClusterDrain
+    Type: AWS::Events::Rule
+  EventContinueNewInstanceHealth:
+    Properties:
+      Description: 'Invokes a Lambda Function to check a newly launched instances
+        healt when our initial Lambda function has timed out '
+      EventPattern:
+        detail:
+          eventName:
+            - RecordLifecycleActionHeartbeat
+          eventSource:
+            - autoscaling.amazonaws.com
+          requestParameters:
+            autoScalingGroupName:
+              - !Ref 'AutoScalingGroup'
+            lifecycleHookName:
+              - !Ref 'LaunchLifeCyclehook'
+        detail-type:
+          - AWS API Call via CloudTrail
+        source:
+          - aws.autoscaling
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt 'LifecycleLaunchLambda.Arn'
+          Id: !Join
+            - '-'
+            - - !Ref 'EcsClusterName'
+              - InvokeNewInstanceHealth
+    Type: AWS::Events::Rule
+  EventInvokeClusterDrain:
+    Properties:
+      Description: Invokes a Lambda Function to handle draining the ECS cluster instance
+        upon termination
+      EventPattern:
+        detail:
+          AutoScalingGroupName:
+            - !Ref 'AutoScalingGroup'
+        detail-type:
+          - EC2 Instance-terminate Lifecycle Action
+        source:
+          - aws.autoscaling
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt 'LifecycleTerminateLambda.Arn'
+          Id: !Join
+            - '-'
+            - - !Ref 'EcsClusterName'
+              - InvokeClusterDrain
+    Type: AWS::Events::Rule
+  EventInvokeNewInstanceHealth:
+    Properties:
+      Description: Invokes a Lambda Function to check a newly launched instances health
+        during autoscaling
+      EventPattern:
+        detail:
+          AutoScalingGroupName:
+            - !Ref 'AutoScalingGroup'
+        detail-type:
+          - EC2 Instance-launch Lifecycle Action
+        source:
+          - aws.autoscaling
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt 'LifecycleLaunchLambda.Arn'
+          Id: !Join
+            - '-'
+            - - !Ref 'EcsClusterName'
+              - InvokeNewInstanceHealth
+    Type: AWS::Events::Rule
+  LaunchConfiguration:
+    Properties:
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref 'EbsVolumeSize'
+      IamInstanceProfile: !Ref 'IamRoleInstanceProfile'
+      ImageId: !Ref 'EcsAmiParameterKey'
+      InstanceType: !Ref 'EcsInstanceType'
+      KeyName: !Ref 'KeyName'
+      SecurityGroups: !Ref 'SecurityGroupIds'
+      UserData: !Base64
+        Fn::Join:
+          - ''
+          - - '#!/bin/bash'
+            - "\n"
+            - echo ECS_CLUSTER=
+            - !Ref 'EcsClusterName'
+            - ' >> /etc/ecs/ecs.config'
+            - "\n"
+            - yum install aws-cfn-bootstrap -y
+            - "\n"
+            - '/opt/aws/bin/cfn-signal -e 0 --stack '
+            - !Ref 'AWS::StackName'
+            - ' --resource AutoScalingGroup --region '
+            - !Ref 'AWS::Region'
+            - "\n"
+    Type: AWS::AutoScaling::LaunchConfiguration
+  LaunchLifeCyclehook:
+    Properties:
+      AutoScalingGroupName: !Ref 'AutoScalingGroup'
+      DefaultResult: ABANDON
+      HeartbeatTimeout: 3600
+      LifecycleTransition: autoscaling:EC2_INSTANCE_LAUNCHING
+    Type: AWS::AutoScaling::LifecycleHook
+  LifecycleLaunchLambda:
+    Properties:
+      Code:
+        S3Bucket: !Ref 'DeploymentS3Bucket'
+        S3Key: !Ref 'LifecycleLaunchFunctionZip'
+      Description: Confirms a newly launched instance has joined the ECS Cluster showing
+        connected and Active during Autoscaling operations
+      Handler: function.lambda_handler
+      MemorySize: 128
+      Role: !Join
+        - ''
+        - - 'arn:aws:iam::'
+          - !Ref 'AWS::AccountId'
+          - :role/
+          - !Ref 'LambdaFunctionRole'
+      Runtime: python2.7
+      Timeout: '300'
+    Type: AWS::Lambda::Function
+  LifecycleLaunchLambdaPermissionOne:
+    DependsOn: LifecycleTerminateLambdaPermissionTwo
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt 'LifecycleLaunchLambda.Arn'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt 'EventInvokeNewInstanceHealth.Arn'
+    Type: AWS::Lambda::Permission
+  LifecycleLauncheLambdaPermissionTwo:
+    DependsOn: LifecycleLaunchLambdaPermissionOne
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt 'LifecycleLaunchLambda.Arn'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt 'EventContinueNewInstanceHealth.Arn'
+    Type: AWS::Lambda::Permission
+  LifecycleTerminateLambda:
+    Properties:
+      Code:
+        S3Bucket: !Ref 'DeploymentS3Bucket'
+        S3Key: !Ref 'LifecycleTerminateFunctionZip'
+      Description: Manages draining ECS Cluster instances and cluster health checks
+        during Autoscaling operations
+      Handler: function.lambda_handler
+      MemorySize: 128
+      Role: !Join
+        - ''
+        - - 'arn:aws:iam::'
+          - !Ref 'AWS::AccountId'
+          - :role/
+          - !Ref 'LambdaFunctionRole'
+      Runtime: python2.7
+      Timeout: '300'
+    Type: AWS::Lambda::Function
+  LifecycleTerminateLambdaPermissionOne:
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt 'LifecycleTerminateLambda.Arn'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt 'EventContinueClusterDrain.Arn'
+    Type: AWS::Lambda::Permission
+  LifecycleTerminateLambdaPermissionTwo:
+    DependsOn: LifecycleTerminateLambdaPermissionOne
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt 'LifecycleTerminateLambda.Arn'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt 'EventInvokeClusterDrain.Arn'
+    Type: AWS::Lambda::Permission
+  TerminationLifeCycleHook:
+    Properties:
+      AutoScalingGroupName: !Ref 'AutoScalingGroup'
+      DefaultResult: ABANDON
+      HeartbeatTimeout: 3600
+      LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+    Type: AWS::AutoScaling::LifecycleHook
+
