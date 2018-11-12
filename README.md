@@ -40,11 +40,11 @@ In this solution four CloudWatch Events are created. Two to pick up the initial 
 
 ### Systems Manager Parameter Store
 
-[AWS Systems Manager Parameter Store] (https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-paramstore.html) provides secure, hierarchical storage for configuration data management and secrets management.
+[AWS Systems Manager Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-paramstore.html) provides secure, hierarchical storage for configuration data management and secrets management.
 
 This solution relies on the AMI IDs stored in Parameter store. Given a naming standard of “*/ami/ecs/latest*” this will always resolve to the latest available AMI for ECS.
 
-CloudFormation [now supports] (https://aws.amazon.com/blogs/mt/integrating-aws-cloudformation-with-aws-systems-manager-parameter-store/) using the values stored in EC2 Parameter store as inputs to CloudFormation templates. So the template can be simply passed a value “*/ami/ecs/latest*” and it will resolve that to the latest AMI.
+CloudFormation [now supports](https://aws.amazon.com/blogs/mt/integrating-aws-cloudformation-with-aws-systems-manager-parameter-store/) using the values stored in EC2 Parameter store as inputs to CloudFormation templates. So the template can be simply passed a value “*/ami/ecs/latest*” and it will resolve that to the latest AMI.
 
 ### Lambda
 
