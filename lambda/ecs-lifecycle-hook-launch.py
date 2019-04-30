@@ -39,7 +39,7 @@ def find_cluster_name(ec2_c, instance_id):
 
     userdata = base64.b64decode(response['UserData']['Value'])
 
-    clustername = re.search("ECS_CLUSTER\s?=\s?(.*?)\s", userdata)
+    clustername = re.search("ECS_CLUSTER\s?=\s?(.*?)\s", str(userdata))
     if clustername:
         return(clustername.group(1))
 
